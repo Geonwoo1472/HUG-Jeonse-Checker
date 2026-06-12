@@ -1,0 +1,13 @@
+{
+    "CURRENT_POLICY_RATIO_1": 1.40,
+    "CURRENT_POLICY_RATIO_2": 0.90,
+    "MAX_SENIOR_DEBT_RATIO": 0.60,
+    "OPEN_API_KEY": "",
+    "COLUMNS": {
+        "DONG": "동리",
+        "APT_NAME": "단지명",
+        "BLDG": "동명",
+        "UNIT": "호명",
+        "PRICE": "공시가격"
+    }
+}
