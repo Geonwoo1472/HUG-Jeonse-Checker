@@ -51,6 +51,3 @@ test/국토교통부_주택 공시가격 정보(2025).csv
 dummy_data.csv
 *.exe
 
-# Exclude Python source files to prevent code leakage
-*.py
-
