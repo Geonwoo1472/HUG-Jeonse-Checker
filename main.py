@@ -389,6 +389,7 @@ class HUGCheckerApp(ctk.CTk):
         if selected_items:
             self.selected_property = self.tree.records[int(selected_items[0])]
         
+
     def run_safety_check(self):
         if not self.selected_property:
             messagebox.showwarning("선택 오류", "먼저 검색 결과에서 매물을 선택해주세요.")
@@ -400,7 +401,34 @@ class HUGCheckerApp(ctk.CTk):
             return
             
         current_deposit = float(deposit_str)
-        target_price = self.selected_property.get(logic.COL_PRICE, 0)
+        
+        api_key = logic.CONFIG.get("OPEN_API_KEY", "")
+        if api_key:
+            self.btn_check.configure(state="disabled", text="실시간 OpenAPI 조회 중...")
+            self.progressbar_search.grid()
+            self.progressbar_search.start()
+            self.update()
+            
+            def run_api_fetch():
+                price, err_msg = logic.fetch_realtime_price(self.selected_property)
+                if price is not None:
+                    # 실시간 공시가격 조회 성공 시 경고 메시지 유무에 관계없이 진행
+                    self.after(0, lambda: self.execute_safety_check(price, current_deposit, err_msg))
+                else:
+                    # 실시간 조회 실패 시, 로컬 DB 가격으로 fallback하고 경고
+                    fallback_price = self.selected_property.get(logic.COL_PRICE, 0)
+                    warn_msg = f"실시간 OpenAPI 조회 실패 ({err_msg}). 로컬 데이터로 대체 심사합니다."
+                    self.after(0, lambda: self.execute_safety_check(fallback_price, current_deposit, warn_msg))
+            
+            threading.Thread(target=run_api_fetch, daemon=True).start()
+        else:
+            target_price = self.selected_property.get(logic.COL_PRICE, 0)
+            self.execute_safety_check(target_price, current_deposit)
+
+    def execute_safety_check(self, target_price, current_deposit, api_warning=None):
+        self.progressbar_search.stop()
+        self.progressbar_search.grid_remove()
+        self.btn_check.configure(state="normal", text="HUG 안전성 종합 검사 시작")
         
         # 수집된 체크리스트 파라미터 구성
         advanced_params = {
@@ -425,11 +453,17 @@ class HUGCheckerApp(ctk.CTk):
         self.lbl_limit_value.configure(text=logic.format_currency(result["limit"]), text_color=("#111111", "#ffffff"))
         
         if result["is_safe"]:
-            self.lbl_result_status.configure(text=f"🟢 {result['message']}", text_color=("#1e7e34", "#4CAF50"))
+            status_text = f"🟢 {result['message']}"
+            if api_warning:
+                status_text += f"\n⚠️ {api_warning}"
+            self.lbl_result_status.configure(text=status_text, text_color=("#1e7e34", "#4CAF50"))
             self.frame_dashboard.configure(fg_color=("#e8f5e9", "#1b3b22"))
             self.lbl_reasons.configure(text="")
         else:
-            self.lbl_result_status.configure(text=f"🔴 {result['message']}", text_color=("#bd2130", "#F44336"))
+            status_text = f"🔴 {result['message']}"
+            if api_warning:
+                status_text += f"\n⚠️ {api_warning}"
+            self.lbl_result_status.configure(text=status_text, text_color=("#bd2130", "#F44336"))
             self.frame_dashboard.configure(fg_color=("#ffebee", "#421f1d"))
             
             reasons_text = "\n".join([f"• {r}" for r in result["reasons"]])

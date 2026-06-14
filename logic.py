@@ -48,7 +48,7 @@ df_search = None
 
 def load_csv(file_path):
     global df_db, df_search
-    usecols = [COL_DONG, COL_APT, COL_BLDG, COL_UNIT, COL_PRICE]
+    usecols = [COL_DONG, COL_APT, COL_BLDG, COL_UNIT, COL_PRICE, "기준연도", "법정동코드", "특수지코드", "본번", "부번"]
     
     import time
     def get_dtypes_and_cols(encoding_format):
@@ -58,6 +58,8 @@ def load_csv(file_path):
         active_dtypes = {}
         for c in actual:
             if c == COL_PRICE:
+                active_dtypes[c] = 'object'
+            elif c in ["기준연도", "법정동코드", "특수지코드", "본번", "부번"]:
                 active_dtypes[c] = 'object'
             else:
                 active_dtypes[c] = 'category'
@@ -210,3 +212,83 @@ def format_currency(value):
         return f"{int(value):,}원"
     except (ValueError, TypeError):
         return "0원"
+
+def fetch_realtime_price(prop):
+    api_key = CONFIG.get("OPEN_API_KEY", "")
+    if not api_key:
+        return None, "API 키가 설정되지 않았습니다."
+        
+    dong_code = str(prop.get("법정동코드", ""))
+    land_type = str(prop.get("특수지코드", ""))
+    bonbun = str(prop.get("본번", ""))
+    bubun = str(prop.get("부번", ""))
+    year = str(prop.get("기준연도", "2025"))
+    
+    if not (dong_code and land_type and bonbun and bubun and bonbun != "nan" and bubun != "nan"):
+        return None, "주소 정보(PNU 구성 요소) 부족"
+        
+    try:
+        bonbun_str = f"{int(float(bonbun)):04d}"
+        bubun_str = f"{int(float(bubun)):04d}"
+        pnu = f"{dong_code}{land_type}{bonbun_str}{bubun_str}"
+    except Exception as e:
+        return None, f"PNU 변환 실패: {e}"
+        
+    url = "http://apis.data.go.kr/1611000/nsdi/ApartHousingPriceService/attr/getApartHousingPriceAttr"
+    
+    import urllib.request
+    import urllib.parse
+    import json
+    
+    params = {
+        "serviceKey": api_key,
+        "pnu": pnu,
+        "stdrYear": year,
+        "format": "json",
+        "numOfRows": "1000"
+    }
+    
+    try:
+        query_string = urllib.parse.urlencode(params)
+        full_url = f"{url}?{query_string}"
+        
+        req = urllib.request.Request(full_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            res_data = response.read().decode('utf-8')
+            data = json.loads(res_data)
+            
+            prices_list = data.get("apartHousingPrices", {}).get("apartHousingPrice", [])
+            if not prices_list:
+                return None, "해당 필지(PNU)에 공시가격 결과 없음"
+                
+            target_bldg = str(prop.get(COL_BLDG, "")).strip()
+            target_unit = str(prop.get(COL_UNIT, "")).strip()
+            
+            matched_price = None
+            for item in prices_list:
+                api_bldg = str(item.get("bldgNm", "")).strip()
+                api_unit = str(item.get("hoNm", "")).strip()
+                
+                # 동/호 일치 비교
+                if (api_bldg == target_bldg and api_unit == target_unit) or (not target_bldg and api_unit == target_unit):
+                    matched_price = item.get("pblntfPclnd")
+                    break
+                    
+            if matched_price is not None:
+                try:
+                    return float(str(matched_price).replace(",", "")), None
+                except ValueError:
+                    return None, f"가격 형식 이상: {matched_price}"
+                    
+            # 매칭에 실패한 경우 첫 번째 호실 가격이라도 대표로 반환
+            first_price = prices_list[0].get("pblntfPclnd")
+            if first_price is not None:
+                try:
+                    return float(str(first_price).replace(",", "")), "대표 호실 가격으로 적용됨"
+                except ValueError:
+                    pass
+                    
+            return None, "일치하는 동/호수를 찾을 수 없습니다."
+            
+    except Exception as e:
+        return None, f"OpenAPI 요청 에러: {e}"
